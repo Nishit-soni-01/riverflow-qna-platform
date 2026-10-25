@@ -2,7 +2,7 @@
 import { Query } from "node-appwrite";
 
 import { tablesDB, users } from "@/models/server/config";
-import { db, questionTable } from "@/models/name";
+import { db, questionTable, voteTable } from "@/models/name";
 
 export type Sort = "newest" | "active" | "top";
 
@@ -42,26 +42,126 @@ interface QuestionRow {
   $createdAt: string;
   $updatedAt: string;
 }
+interface VoteRow {
+  type: "question" | "answer";
+  typeId: string;
+  voteStatus: "upvoted" | "downvoted";
+}
+
+
+
 
 export async function getQuestions(opts: {
   sort?: Sort;
   q?: string;
   tag?: string;
+  page?: number;
+  pageSize?: number;
 }): Promise<{ items: Question[]; total: number }> {
-  const { sort = "newest", q, tag } = opts;
+  const {
+    sort = "newest",
+    q,
+    tag,
+    page = 1,
+    pageSize = 20,
+  } = opts;
 
-  const response = await tablesDB.listRows({
-    databaseId: db,
-    tableId: questionTable,
-    queries: [
-      Query.orderDesc("$createdAt"),
-      Query.limit(100),
-    ],
-  });
+  const safePage = Math.max(1, Math.floor(page));
+  const safePageSize = Math.min(100, Math.max(1, Math.floor(pageSize)));
 
-  const rows = response.rows as unknown as QuestionRow[];
+  // Build database filters.
+  const filters: string[] = [];
+  const searchTerm = q?.trim();
+  const tagName = tag?.trim();
 
-  // Resolve author names from Appwrite, without exposing private user data.
+  // if (searchTerm) {
+  //   filters.push(
+  //     Query.or([
+  //       Query.search("title", searchTerm),
+  //       Query.search("content", searchTerm),
+  //     ])
+  //   );
+  // }
+
+  if (searchTerm) {
+  filters.push(Query.search("title", searchTerm));
+}
+
+  if (tagName) {
+    filters.push(Query.containsAny("tags", [tagName]));
+  }
+
+  // Fetch matching questions in batches so pagination and Top voted
+  // sorting consider all matching questions, not just the first 100.
+  const rows: QuestionRow[] = [];
+  const batchSize = 100;
+  let offset = 0;
+
+  while (true) {
+    const queries = [...filters];
+
+    if (sort === "active") {
+      queries.push(Query.orderDesc("$updatedAt"));
+    } else {
+      queries.push(Query.orderDesc("$createdAt"));
+    }
+
+    queries.push(Query.limit(batchSize), Query.offset(offset));
+
+    const response = await tablesDB.listRows({
+      databaseId: db,
+      tableId: questionTable,
+      queries,
+    });
+
+    const batch = response.rows as unknown as QuestionRow[];
+    rows.push(...batch);
+
+    if (batch.length < batchSize) {
+      break;
+    }
+
+    offset += batch.length;
+  }
+
+  // Fetch question votes in batches.
+  const voteRows: VoteRow[] = [];
+  const voteBatchSize = 100;
+  let voteOffset = 0;
+
+  while (true) {
+    const voteResponse = await tablesDB.listRows({
+      databaseId: db,
+      tableId: voteTable,
+      queries: [
+        Query.equal("type", "question"),
+        Query.limit(voteBatchSize),
+        Query.offset(voteOffset),
+      ],
+    });
+
+    const batch = voteResponse.rows as unknown as VoteRow[];
+    voteRows.push(...batch);
+
+    if (batch.length < voteBatchSize) {
+      break;
+    }
+
+    voteOffset += batch.length;
+  }
+
+  const voteScores = new Map<string, number>();
+
+  for (const vote of voteRows) {
+    const currentScore = voteScores.get(vote.typeId) ?? 0;
+
+    voteScores.set(
+      vote.typeId,
+      currentScore + (vote.voteStatus === "upvoted" ? 1 : -1)
+    );
+  }
+
+  // Resolve author names.
   const authorNames = new Map<string, string>();
 
   await Promise.all(
@@ -80,7 +180,7 @@ export async function getQuestions(opts: {
     title: row.title,
     excerpt: row.content.slice(0, 220),
     tags: row.tags ?? [],
-    votes: 0,
+    votes: voteScores.get(row.$id) ?? 0,
     answers: 0,
     views: 0,
     authorId: row.authorId,
@@ -90,24 +190,7 @@ export async function getQuestions(opts: {
     $updatedAt: row.$updatedAt,
   }));
 
-  if (q?.trim()) {
-    const needle = q.trim().toLowerCase();
-
-    items = items.filter(
-      (item) =>
-        item.title.toLowerCase().includes(needle) ||
-        item.excerpt.toLowerCase().includes(needle)
-    );
-  }
-
-  if (tag?.trim()) {
-    items = items.filter((item) =>
-      item.tags.some((itemTag) =>
-        itemTag.toLowerCase() === tag.trim().toLowerCase()
-      )
-    );
-  }
-
+  // Sort all matching results before slicing the requested page.
   items.sort((a, b) => {
     if (sort === "active") {
       return b.$updatedAt.localeCompare(a.$updatedAt);
@@ -120,5 +203,12 @@ export async function getQuestions(opts: {
     return b.$createdAt.localeCompare(a.$createdAt);
   });
 
-  return { items, total: items.length };
+  const total = items.length;
+  const start = (safePage - 1) * safePageSize;
+
+  return {
+    items: items.slice(start, start + safePageSize),
+    total,
+  };
 }
+
