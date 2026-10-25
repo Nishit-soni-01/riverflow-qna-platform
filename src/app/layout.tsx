@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/layout/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
+import { AuthInitializer } from "@/components/layout/auth-initializer";
 import "./globals.css";
 
 const sans = Inter({ variable: "--font-sans", subsets: ["latin"] });
@@ -31,6 +32,7 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
+          <AuthInitializer />
           {children}
           <Toaster richColors position="top-right" />
         </ThemeProvider>

@@ -68,6 +68,45 @@ export function AuthorProfile({
     };
   }, [userId]);
 
+  useEffect(() => {
+  const handleReputationUpdate = (event: Event) => {
+    const customEvent = event as CustomEvent<{ userId: string }>;
+
+    if (customEvent.detail.userId !== userId) {
+      return;
+    }
+
+    async function reloadProfile() {
+      try {
+        const response = await fetch(
+          `/api/users/${encodeURIComponent(userId)}`,
+          { cache: "no-store" }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Profile request failed: ${response.status}`);
+        }
+
+        const data = (await response.json()) as PublicProfile;
+        setProfile(data);
+      } catch (error) {
+        console.error("Could not refresh author reputation:", error);
+      }
+    }
+
+    void reloadProfile();
+  };
+
+  window.addEventListener("riverflow:reputation-updated", handleReputationUpdate);
+
+  return () => {
+    window.removeEventListener(
+      "riverflow:reputation-updated",
+      handleReputationUpdate
+    );
+  };
+  }, [userId]);
+
   const name = profile?.name || "Riverflow user";
 
   const initials = name

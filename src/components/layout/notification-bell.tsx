@@ -3,7 +3,12 @@
 
 import React from "react";
 import { useRouter } from "next/navigation";
-import { Bell, CheckCheck, Loader2, MessageSquare } from "lucide-react";
+import {
+  Bell,
+  CheckCheck,
+  Loader2,
+  UserRound,
+} from "lucide-react";
 import { Query } from "appwrite";
 
 import { account, tablesDB } from "@/models/client/config";
@@ -28,6 +33,12 @@ interface Notification {
   $createdAt: string;
 }
 
+interface PublicProfile {
+  id: string;
+  name: string;
+  avatarUrl: string;
+}
+
 interface NotificationBellProps {
   userId: string;
 }
@@ -36,21 +47,32 @@ export function NotificationBell({ userId }: NotificationBellProps) {
   const router = useRouter();
 
   const [notifications, setNotifications] = React.useState<Notification[]>([]);
+  const [profiles, setProfiles] = React.useState<
+    Record<string, PublicProfile | null>
+  >({});
+  const [failedAvatars, setFailedAvatars] = React.useState<
+    Record<string, boolean>
+  >({});
   const [loading, setLoading] = React.useState(false);
   const [updatingId, setUpdatingId] = React.useState<string | null>(null);
   const [error, setError] = React.useState("");
+
+  // Remember requested profiles so repeated notifications don't refetch them.
+  const requestedProfiles = React.useRef(new Set<string>());
 
   const unreadCount = notifications.filter(
     (notification) => !notification.isRead
   ).length;
 
   const fetchNotifications = React.useCallback(async () => {
-    setLoading(true);
-    setError("");
+    
+    
 
     try {
-      // Confirm that the active Appwrite session belongs to this user.
       const user = await account.get();
+
+      setLoading(true);
+      setError("");
 
       if (user.$id !== userId) {
         setNotifications([]);
@@ -77,8 +99,65 @@ export function NotificationBell({ userId }: NotificationBellProps) {
   }, [userId]);
 
   React.useEffect(() => {
-    void fetchNotifications();
+    let cancelled = false;
+
+    const load = async () => {
+      await Promise.resolve();
+
+      if (!cancelled) {
+        void fetchNotifications();
+      }
+    };
+
+    void load();
+
+    return () => {
+        cancelled = true;
+    };
   }, [fetchNotifications]);
+
+  // Load each actor's public profile once per component lifetime.
+  React.useEffect(() => {
+    const actorIds = [
+      ...new Set(notifications.map((notification) => notification.actorId)),
+    ];
+
+    for (const actorId of actorIds) {
+      if (!actorId || requestedProfiles.current.has(actorId)) {
+        continue;
+      }
+
+      requestedProfiles.current.add(actorId);
+
+      void (async () => {
+        try {
+          const response = await fetch(
+            `/api/users/${encodeURIComponent(actorId)}`,
+            { cache: "no-store" }
+          );
+
+          if (!response.ok) {
+            throw new Error(`Profile request failed: ${response.status}`);
+          }
+
+          const profile = (await response.json()) as PublicProfile;
+
+          setProfiles((previous) => ({
+            ...previous,
+            [actorId]: profile,
+          }));
+        } catch (err) {
+          console.error(`Failed to load notification actor ${actorId}:`, err);
+
+          // Cache the failure too, avoiding repeated requests on every render.
+          setProfiles((previous) => ({
+            ...previous,
+            [actorId]: null,
+          }));
+        }
+      })();
+    }
+  }, [notifications]);
 
   async function openNotification(notification: Notification) {
     setUpdatingId(notification.$id);
@@ -157,20 +236,24 @@ export function NotificationBell({ userId }: NotificationBellProps) {
   }
 
   function getMessage(notification: Notification) {
+    const actorName = profiles[notification.actorId]?.name || "Someone";
+
     switch (notification.type) {
       case "answer":
-        return "Someone answered your question";
+        return `${actorName} answered your question`;
       case "question_comment":
-        return "Someone commented on your question";
+        return `${actorName} commented on your question`;
       case "answer_comment":
-        return "Someone commented on an answer";
+        return `${actorName} commented on an answer`;
     }
   }
 
   return (
-    <DropdownMenu onOpenChange={(open) => {
-      if (open) void fetchNotifications();
-    }}>
+    <DropdownMenu
+      onOpenChange={(open) => {
+        if (open) void fetchNotifications();
+      }}
+    >
       <DropdownMenuTrigger
         render={
           <Button
@@ -232,45 +315,65 @@ export function NotificationBell({ userId }: NotificationBellProps) {
         ) : notifications.length === 0 ? (
           <div className="px-4 py-8 text-center">
             <Bell className="mx-auto size-7 text-muted-foreground" />
-            <p className="mt-2 text-sm font-medium">You're all caught up</p>
+            <p className="mt-2 text-sm font-medium">You&apos;re all caught up</p>
             <p className="mt-1 text-xs text-muted-foreground">
               New answers and comments will appear here.
             </p>
           </div>
         ) : (
           <div className="max-h-96 overflow-y-auto">
-            {notifications.map((notification) => (
-              <DropdownMenuItem
-                key={notification.$id}
-                disabled={updatingId === notification.$id}
-                onClick={() => void openNotification(notification)}
-                className="flex cursor-pointer items-start gap-3 whitespace-normal px-3 py-3"
-              >
-                <span className="mt-0.5 rounded-full bg-muted p-2">
-                  {updatingId === notification.$id ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <MessageSquare className="size-4" />
+            {notifications.map((notification) => {
+              const profile = profiles[notification.actorId];
+              const avatarFailed = failedAvatars[notification.actorId];
+
+              return (
+                <DropdownMenuItem
+                  key={notification.$id}
+                  disabled={updatingId === notification.$id}
+                  onClick={() => void openNotification(notification)}
+                  className="flex cursor-pointer items-start gap-3 whitespace-normal px-3 py-3"
+                >
+                  <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted">
+                    {updatingId === notification.$id ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : profile?.avatarUrl && !avatarFailed ? (
+                      <img
+                        src={profile.avatarUrl}
+                        alt=""
+                        className="size-full object-cover"
+                        onError={() =>
+                          setFailedAvatars((previous) => ({
+                            ...previous,
+                            [notification.actorId]: true,
+                          }))
+                        }
+                      />
+                    ) : (
+                      <UserRound
+                        className="size-4 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                    )}
+                  </span>
+
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm leading-5">
+                      {getMessage(notification)}
+                    </span>
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {new Date(notification.$createdAt).toLocaleString()}
+                    </span>
+                  </span>
+
+                  {!notification.isRead && (
+                    <span
+                      className="mt-2 size-2 shrink-0 rounded-full bg-primary"
+                      aria-label="Unread"
+                    />
                   )}
-                </span>
-
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm leading-5">
-                    {getMessage(notification)}
-                  </span>
-                  <span className="mt-1 block text-xs text-muted-foreground">
-                    {new Date(notification.$createdAt).toLocaleString()}
-                  </span>
-                </span>
-
-                {!notification.isRead && (
-                  <span
-                    className="mt-2 size-2 shrink-0 rounded-full bg-primary"
-                    aria-label="Unread"
-                  />
-                )}
-              </DropdownMenuItem>
-            ))}
+                </DropdownMenuItem>
+              );
+            })}
           </div>
         )}
 
