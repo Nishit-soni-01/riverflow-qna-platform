@@ -1,12 +1,14 @@
+
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 // Fixed locale + timezone so server and client render the same first string.
 const fixedFormat = new Intl.DateTimeFormat("en", {
   dateStyle: "medium",
   timeZone: "UTC",
 });
+
 const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 
 const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
@@ -18,25 +20,47 @@ const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
 ];
 
 function relative(iso: string) {
-  const seconds = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
+  const seconds = Math.round(
+    (new Date(iso).getTime() - Date.now()) / 1000
+  );
+
   for (const [unit, size] of UNITS) {
     if (Math.abs(seconds) >= size) {
       return rtf.format(Math.round(seconds / size), unit);
     }
   }
+
   return "just now";
 }
 
-/**
- * Shows a fixed date first, then switches to "3 hours ago" after mount.
- * Date.now() only runs inside an effect, which Next.js 16 Cache Components allows.
- */
-export function TimeAgo({ date, className }: { date: string; className?: string }) {
-  const [text, setText] = useState(() => fixedFormat.format(new Date(date)));
+function subscribe() {
+  return () => {};
+}
 
-  useEffect(() => {
-    setText(relative(date));
-  }, [date]);
+function getSnapshot() {
+  return true;
+}
+
+function getServerSnapshot() {
+  return false;
+}
+
+export function TimeAgo({
+  date,
+  className,
+}: {
+  date: string;
+  className?: string;
+}) {
+  const mounted = useSyncExternalStore(
+    subscribe,
+    getSnapshot,
+    getServerSnapshot
+  );
+
+  const text = mounted
+    ? relative(date)
+    : fixedFormat.format(new Date(date));
 
   return (
     <time

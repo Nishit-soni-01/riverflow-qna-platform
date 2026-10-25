@@ -11,15 +11,18 @@ import {
   type VoteType,
 } from "@/models/client/votes";
 
+
 interface VoteControlProps {
   type: VoteType;
   typeId: string;
+  authorId: string;
   refreshKey?: number;
 }
 
 export function VoteControl({
   type,
   typeId,
+  authorId,
   refreshKey = 0,
 }: VoteControlProps) {
   const [upvotes, setUpvotes] = useState(0);
@@ -47,8 +50,23 @@ export function VoteControl({
   }, [type, typeId]);
 
   useEffect(() => {
-    void refresh();
+    let cancelled = false;
+
+    async function loadVotes() {
+      await Promise.resolve();
+
+      if (!cancelled) {
+        void refresh();
+      }
+    }
+
+    void loadVotes();
+
+    return () => {
+      cancelled = true;
+    };
   }, [refresh, refreshKey]);
+
 
   const handleVote = async (vote: VoteStatus) => {
     if (submitting) return;
@@ -59,6 +77,12 @@ export function VoteControl({
     try {
       await castVote(type, typeId, vote);
       await refresh();
+
+      window.dispatchEvent(
+        new CustomEvent("riverflow:reputation-updated", {
+          detail: { userId: authorId },
+        })
+      );
     } catch (err) {
       console.error("Failed to cast vote:", err);
       setError(

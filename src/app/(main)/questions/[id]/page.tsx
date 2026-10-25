@@ -153,9 +153,21 @@ function QuestionDetailsContent() {
   }, [questionId]);
 
   useEffect(() => {
-    if (questionId) {
-      fetchAnswers();
-    }
+    let cancelled = false;
+
+    const loadAnswers = async () => {
+      await Promise.resolve();
+
+      if (!cancelled && questionId) {
+        void fetchAnswers();
+      }
+    };
+
+    void loadAnswers();
+
+    return () => {
+      cancelled = true;
+    };
   }, [questionId, fetchAnswers]);
 
   const handleAcceptAnswer = async (answerId: string) => {
@@ -342,7 +354,11 @@ function QuestionDetailsContent() {
 
       <div className="grid gap-8 md:grid-cols-[56px_minmax(0,1fr)]">
         <aside className="flex items-start gap-3 md:flex-col">
-          <VoteControl type="question" typeId={question.$id} />
+          <VoteControl
+              type="question"
+              typeId={question.$id}
+              authorId={question.authorId}
+            />
 
           <span className="flex items-center gap-2 text-sm text-muted-foreground md:flex-col">
             <MessageSquare className="size-4" />
@@ -424,7 +440,11 @@ function QuestionDetailsContent() {
                 {answers.map((answer) => (
                   <div key={answer.$id} className="space-y-3">
                     <div className="grid grid-cols-[44px_minmax(0,1fr)] gap-4 rounded-xl border bg-card p-5 sm:p-6">
-                      <VoteControl type="answer" typeId={answer.$id} />
+                      <VoteControl
+                        type="answer"
+                        typeId={answer.$id}
+                        authorId={answer.authorId}
+                      />
 
                       <div className="min-w-0">
                         <div className="space-y-3">

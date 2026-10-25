@@ -76,13 +76,22 @@ export function CommentsSection({
       }
     }
 
+    async function loadComments() {
+      await Promise.resolve();
+
+      if (!cancelled) {
+        void fetchComments();
+      }
+    }
+
     void loadUser();
-    void fetchComments();
+    void loadComments();
 
     return () => {
       cancelled = true;
     };
   }, [fetchComments]);
+
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
