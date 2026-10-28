@@ -6,6 +6,9 @@ export const answerTable = "answers";
 export const commentTable = "comments";
 export const voteTable = "votes";
 
+export const profileAvatarBucket = "6ae217c200038ce37f8b";
+
+
 
 
 export const questionAttachmentBucket = "question-attachment";

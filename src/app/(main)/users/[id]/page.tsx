@@ -1,5 +1,5 @@
 "use client";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAuthStore } from "@/store/Auth";
@@ -14,6 +14,7 @@ import {
   Eye,
   CheckCircle2,
   Pencil,
+  ImagePlus,
   Save,
   X,
 } from "lucide-react";
@@ -70,6 +71,11 @@ function UserProfileContent() {
   const [editAbout, setEditAbout] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
+
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const [selectedAvatar, setSelectedAvatar] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState("");
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -167,6 +173,119 @@ function UserProfileContent() {
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleAvatarUpload() {
+    if (!jwt || !user || user.$id !== profile?.id) {
+      setSaveMessage("Please sign in to edit your own profile.");
+      return;
+    }
+
+    if (!selectedAvatar) {
+      setSaveMessage("Please choose an image first.");
+      return;
+    }
+
+    setUploadingAvatar(true);
+    setSaveMessage("");
+
+    try {
+      const formData = new FormData();
+      formData.append("avatar", selectedAvatar);
+
+      const response = await fetch("/api/users/me/avatar", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${jwt}`,
+        },
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to upload avatar.");
+      }
+
+      setProfile((current) =>
+        current
+          ? { ...current, avatarUrl: data.avatarUrl }
+          : current
+      );
+
+      setSelectedAvatar(null);
+      setAvatarPreview("");
+      if (avatarInputRef.current) {
+        avatarInputRef.current.value = "";
+      }
+
+      setSaveMessage("Profile picture updated successfully.");
+    } catch (err) {
+      setSaveMessage(
+        err instanceof Error ? err.message : "Unable to upload avatar."
+      );
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }
+
+  async function handleAvatarRemove() {
+    if (!jwt || !user || user.$id !== profile?.id) {
+      setSaveMessage("Please sign in to edit your own profile.");
+      return;
+    }
+
+    if (!profile?.avatarUrl) {
+      setSaveMessage("There is no profile picture to remove.");
+      return;
+    }
+
+    setUploadingAvatar(true);
+    setSaveMessage("");
+
+    try {
+      const response = await fetch("/api/users/me/avatar", {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${jwt}`,
+        },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Unable to remove profile picture.");
+      }
+
+      const endpoint = window.location.origin;
+      const fallbackUrl = new URL("/api/users/" + encodeURIComponent(profile.id), endpoint);
+
+      // Reload the profile to retrieve the generated initials avatar.
+      const profileResponse = await fetch(fallbackUrl.toString(), {
+        cache: "no-store",
+      });
+
+      if (!profileResponse.ok) {
+        throw new Error("Picture removed, but profile refresh failed. Reload the page.");
+      }
+
+      const refreshedProfile = await profileResponse.json();
+      setProfile(refreshedProfile);
+      setSelectedAvatar(null);
+      setAvatarPreview("");
+
+      if (avatarInputRef.current) {
+        avatarInputRef.current.value = "";
+      }
+
+      setSaveMessage("Profile picture removed successfully.");
+    } catch (err) {
+      setSaveMessage(
+        err instanceof Error ? err.message : "Unable to remove profile picture."
+      );
+    } finally {
+      setUploadingAvatar(false);
     }
   }
 
@@ -421,6 +540,60 @@ function UserProfileContent() {
 
           {editing ? (
             <div className="mt-4 space-y-4">
+              <div>
+                <label className="mb-2 block text-sm font-medium">
+                  Profile picture
+                </label>
+
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="block w-full text-sm"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+
+                    setSelectedAvatar(file ?? null);
+                    setAvatarPreview(
+                      file ? URL.createObjectURL(file) : ""
+                    );
+                    setSaveMessage("");
+                  }}
+                />
+
+                {avatarPreview && (
+                  <img
+                    src={avatarPreview}
+                    alt="Selected profile picture preview"
+                    className="mt-3 size-24 rounded-2xl border object-cover"
+                  />
+                )}
+
+                <div className="flex flex-wrap gap-2 mt-3">
+                  <button
+                    type="button"
+                    onClick={handleAvatarUpload}
+                    disabled={!selectedAvatar || uploadingAvatar}
+                    className="inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium hover:bg-muted disabled:opacity-50"
+                  >
+                    <ImagePlus className="size-4" />
+                    {uploadingAvatar ? "Uploading..." : "Upload picture"}
+                  </button>
+
+                  {profile.avatarUrl && (
+                    <button
+                      type="button"
+                      onClick={handleAvatarRemove}
+                      disabled={uploadingAvatar}
+                      className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 px-4 py-2 text-sm font-medium text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+                    >
+                      <X className="size-4" />
+                      {uploadingAvatar ? "Please wait..." : "Remove picture"}
+                    </button>
+                  )}
+                </div>
+              </div>
+
               <div>
                 <label
                   htmlFor="edit-name"

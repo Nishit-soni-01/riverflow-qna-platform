@@ -1,9 +1,8 @@
-
 import { NextResponse } from "next/server";
 import { AppwriteException, Query } from "node-appwrite";
 
 import { users, tablesDB } from "@/models/server/config";
-import { db, questionTable, answerTable } from "@/models/name";
+import { db, questionTable, answerTable, profileAvatarBucket } from "@/models/name";
 import env from "@/app/env";
 
 const VOTES_TABLE = "votes";
@@ -35,7 +34,6 @@ interface ActivityAnswer extends AnswerRow {
   content: string;
   $createdAt: string;
 }
-
 
 interface VoteRow {
   $id: string;
@@ -144,22 +142,18 @@ async function calculateReputation(userId: string) {
     }
   }
 
- 
+  let acceptedAnswers = 0;
 
-  
-let acceptedAnswers = 0;
+  for (const answer of answers) {
+    const matchingQuestions = await listAllRows<QuestionRow>(
+      questionTable,
+      [Query.equal("acceptedAnswerId", answer.$id)]
+    );
 
-for (const answer of answers) {
-  const matchingQuestions = await listAllRows<QuestionRow>(
-    questionTable,
-    [Query.equal("acceptedAnswerId", answer.$id)]
-  );
-
-  if (matchingQuestions.length > 0) {
-    acceptedAnswers++;
+    if (matchingQuestions.length > 0) {
+      acceptedAnswers++;
+    }
   }
-}
-
 
   const reputation =
     questionUpvotes * 5 -
@@ -198,84 +192,98 @@ export async function GET(
         : "";
     
     const {
-    reputation,
-    badge,
-    totalQuestions,
-    totalAnswers,
-    acceptedAnswers,
-    } = await calculateReputation(id);;
+      reputation,
+      badge,
+      totalQuestions,
+      totalAnswers,
+      acceptedAnswers,
+    } = await calculateReputation(id);
 
-     const [recentQuestions, recentAnswers] = await Promise.all([
-        listRecentRows<ActivityQuestion>(questionTable, [
-          Query.equal("authorId", id),
-        ]),
-        listRecentRows<ActivityAnswer>(answerTable, [
-          Query.equal("authorId", id),
-        ]),
-      ]);
+    const [recentQuestions, recentAnswers] = await Promise.all([
+      listRecentRows<ActivityQuestion>(questionTable, [
+        Query.equal("authorId", id),
+      ]),
+      listRecentRows<ActivityAnswer>(answerTable, [
+        Query.equal("authorId", id),
+      ]),
+    ]);
 
-      const acceptedAnswerChecks = await Promise.all(
-  recentAnswers.map(async (answer) => {
-    const matchingQuestions = await listAllRows<QuestionRow>(
-      questionTable,
-      [Query.equal("acceptedAnswerId", answer.$id)]
+    const acceptedAnswerChecks = await Promise.all(
+      recentAnswers.map(async (answer) => {
+        const matchingQuestions = await listAllRows<QuestionRow>(
+          questionTable,
+          [Query.equal("acceptedAnswerId", answer.$id)]
+        );
+
+        return {
+          answerId: answer.$id,
+          accepted: matchingQuestions.length > 0,
+        };
+      })
     );
 
-    return {
-      answerId: answer.$id,
-      accepted: matchingQuestions.length > 0,
-    };
-  })
-);
+    const acceptedAnswerIds = new Set(
+      acceptedAnswerChecks
+        .filter((item) => item.accepted)
+        .map((item) => item.answerId)
+    );
 
-const acceptedAnswerIds = new Set(
-  acceptedAnswerChecks
-    .filter((item) => item.accepted)
-    .map((item) => item.answerId)
-);
+    const questionIds = [
+      ...new Set(recentAnswers.map((answer) => answer.questionId)),
+    ];
 
-const questionIds = [
-  ...new Set(recentAnswers.map((answer) => answer.questionId)),
-];
+    const linkedQuestions = await Promise.all(
+      questionIds.map(async (questionId) => {
+        const rows = await tablesDB.listRows({
+          databaseId: db,
+          tableId: questionTable,
+          queries: [
+            Query.equal("$id", questionId),
+            Query.limit(1),
+          ],
+        });
 
-const linkedQuestions = await Promise.all(
-  questionIds.map(async (questionId) => {
-    const rows = await tablesDB.listRows({
-      databaseId: db,
-      tableId: questionTable,
-      queries: [
-        Query.equal("$id", questionId),
-        Query.limit(1),
-      ],
-    });
+        const question = rows.rows[0] as unknown as
+          | { $id: string; title: string }
+          | undefined;
 
-    const question = rows.rows[0] as unknown as
-      | { $id: string; title: string }
-      | undefined;
+        return question
+          ? { id: question.$id, title: question.title }
+          : null;
+      })
+    );
 
-    return question
-      ? { id: question.$id, title: question.title }
-      : null;
-  })
-);
-
-const questionTitleById = new Map(
-  linkedQuestions
-    .filter(
-      (question): question is { id: string; title: string } =>
-        question !== null
-    )
-    .map((question) => [question.id, question.title])
-);
+    const questionTitleById = new Map(
+      linkedQuestions
+        .filter(
+          (question): question is { id: string; title: string } =>
+            question !== null
+        )
+        .map((question) => [question.id, question.title])
+    );
 
     const endpoint = env.appwrite.endpoint.replace(/\/+$/, "");
-    const avatarUrl = new URL(`${endpoint}/avatars/initials`);
 
-    avatarUrl.searchParams.set("name", user.name || "Riverflow User");
-    avatarUrl.searchParams.set("width", "128");
-    avatarUrl.searchParams.set("height", "128");
-    avatarUrl.searchParams.set("background", "00B887");
-    avatarUrl.searchParams.set("color", "FFFFFF");
+    const avatarFileId =
+      typeof user.prefs?.avatarFileId === "string"
+        ? user.prefs.avatarFileId
+        : null;
+
+    let avatarUrl: URL;
+
+    if (avatarFileId) {
+      avatarUrl = new URL(
+        `${endpoint}/storage/buckets/${profileAvatarBucket}/files/${encodeURIComponent(avatarFileId)}/view`
+      );
+      avatarUrl.searchParams.set("project", env.appwrite.projectId);
+    } else {
+      avatarUrl = new URL(`${endpoint}/avatars/initials`);
+      avatarUrl.searchParams.set("name", user.name || "Riverflow User");
+      avatarUrl.searchParams.set("width", "128");
+      avatarUrl.searchParams.set("height", "128");
+      avatarUrl.searchParams.set("background", "00B887");
+      avatarUrl.searchParams.set("color", "FFFFFF");
+    }
 
     return NextResponse.json(
       {
@@ -306,7 +314,6 @@ const questionTitleById = new Map(
           accepted: acceptedAnswerIds.has(answer.$id),
         })),
       },
-      
       {
         headers: {
           "Cache-Control": "no-store",
