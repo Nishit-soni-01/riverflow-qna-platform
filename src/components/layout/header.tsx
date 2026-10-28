@@ -181,7 +181,7 @@ export function Header() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
                   <DropdownMenuItem
-                    render={<Link href={`/profile/${user?.$id ?? ""}`} />}
+                     render={<Link href={user?.$id ? `/users/${user.$id}` : "/login"} />}
                   >
                     <User className="size-4" />
                     Profile

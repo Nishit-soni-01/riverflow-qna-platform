@@ -23,6 +23,20 @@ interface AnswerRow {
   authorId: string;
 }
 
+interface ActivityQuestion extends QuestionRow {
+  title: string;
+  tags?: string[];
+  views?: number;
+  $createdAt: string;
+}
+
+interface ActivityAnswer extends AnswerRow {
+  questionId: string;
+  content: string;
+  $createdAt: string;
+}
+
+
 interface VoteRow {
   $id: string;
   type: VoteType;
@@ -56,6 +70,23 @@ async function listAllRows<T>(
   }
 
   return rows;
+}
+
+async function listRecentRows<T>(
+  tableId: string,
+  queries: string[] = []
+): Promise<T[]> {
+  const response = await tablesDB.listRows({
+    databaseId: db,
+    tableId,
+    queries: [
+      ...queries,
+      Query.orderDesc("$createdAt"),
+      Query.limit(5),
+    ],
+  });
+
+  return response.rows as unknown as T[];
 }
 
 function getBadge(reputation: number): "Beginner" | "Contributor" | "Expert" {
@@ -140,6 +171,9 @@ for (const answer of answers) {
   return {
     reputation,
     badge: getBadge(reputation),
+    totalQuestions: questions.length,
+    totalAnswers: answers.length,
+    acceptedAnswers,
   };
 }
 
@@ -158,8 +192,81 @@ export async function GET(
     }
 
     const user = await users.get({ userId: id });
+    const about =
+      typeof user.prefs?.about === "string"
+        ? user.prefs.about
+        : "";
     
-    const { reputation, badge } = await calculateReputation(id);
+    const {
+    reputation,
+    badge,
+    totalQuestions,
+    totalAnswers,
+    acceptedAnswers,
+    } = await calculateReputation(id);;
+
+     const [recentQuestions, recentAnswers] = await Promise.all([
+        listRecentRows<ActivityQuestion>(questionTable, [
+          Query.equal("authorId", id),
+        ]),
+        listRecentRows<ActivityAnswer>(answerTable, [
+          Query.equal("authorId", id),
+        ]),
+      ]);
+
+      const acceptedAnswerChecks = await Promise.all(
+  recentAnswers.map(async (answer) => {
+    const matchingQuestions = await listAllRows<QuestionRow>(
+      questionTable,
+      [Query.equal("acceptedAnswerId", answer.$id)]
+    );
+
+    return {
+      answerId: answer.$id,
+      accepted: matchingQuestions.length > 0,
+    };
+  })
+);
+
+const acceptedAnswerIds = new Set(
+  acceptedAnswerChecks
+    .filter((item) => item.accepted)
+    .map((item) => item.answerId)
+);
+
+const questionIds = [
+  ...new Set(recentAnswers.map((answer) => answer.questionId)),
+];
+
+const linkedQuestions = await Promise.all(
+  questionIds.map(async (questionId) => {
+    const rows = await tablesDB.listRows({
+      databaseId: db,
+      tableId: questionTable,
+      queries: [
+        Query.equal("$id", questionId),
+        Query.limit(1),
+      ],
+    });
+
+    const question = rows.rows[0] as unknown as
+      | { $id: string; title: string }
+      | undefined;
+
+    return question
+      ? { id: question.$id, title: question.title }
+      : null;
+  })
+);
+
+const questionTitleById = new Map(
+  linkedQuestions
+    .filter(
+      (question): question is { id: string; title: string } =>
+        question !== null
+    )
+    .map((question) => [question.id, question.title])
+);
 
     const endpoint = env.appwrite.endpoint.replace(/\/+$/, "");
     const avatarUrl = new URL(`${endpoint}/avatars/initials`);
@@ -174,10 +281,32 @@ export async function GET(
       {
         id: user.$id,
         name: user.name || "Riverflow User",
+        about,
         avatarUrl: avatarUrl.toString(),
         reputation,
         badge,
+        totalQuestions,
+        totalAnswers,
+        acceptedAnswers,
+        recentQuestions: recentQuestions.map((question) => ({
+          id: question.$id,
+          title: question.title,
+          tags: question.tags ?? [],
+          views: question.views ?? 0,
+          createdAt: question.$createdAt,
+        })),
+        recentAnswers: recentAnswers.map((answer) => ({
+          id: answer.$id,
+          questionId: answer.questionId,
+          questionTitle:
+            questionTitleById.get(answer.questionId) ??
+            "Original question unavailable",
+          content: answer.content,
+          createdAt: answer.$createdAt,
+          accepted: acceptedAnswerIds.has(answer.$id),
+        })),
       },
+      
       {
         headers: {
           "Cache-Control": "no-store",

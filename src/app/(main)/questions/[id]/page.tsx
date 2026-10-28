@@ -5,6 +5,7 @@ import {
   useEffect,
   useState,
   useCallback,
+  useRef,
   type SyntheticEvent,
 } from "react";
 import Link from "next/link";
@@ -13,6 +14,7 @@ import {
   ArrowLeft,
   CalendarDays,
   CheckCircle2,
+  Eye,
   Loader2,
   MessageSquare,
   Send,
@@ -35,6 +37,7 @@ interface Question {
   authorId: string;
   tags: string[];
   acceptedAnswerId?: string | null;
+  views?: number;
 }
 
 interface Answer {
@@ -52,6 +55,8 @@ function QuestionDetailsContent() {
 
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [question, setQuestion] = useState<Question | null>(null);
+  const [viewCount, setViewCount] = useState(0);
+  const countedQuestionIds = useRef<Set<string>>(new Set());
   const [answers, setAnswers] = useState<Answer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isAnswersLoading, setIsAnswersLoading] = useState(true);
@@ -98,10 +103,55 @@ function QuestionDetailsContent() {
           tableId: questionTable,
           rowId: questionId,
         });
+        const loadedQuestion = row as unknown as Question;
+        const currentViews = loadedQuestion.views ?? 0;
 
         if (!cancelled) {
-          setQuestion(row as unknown as Question);
+          setQuestion(loadedQuestion);
+          setViewCount(currentViews);
+          
         }
+
+        
+      // Increment the view count for authenticated users.
+      // Count a question view only once per mounted page visit.
+      if (!countedQuestionIds.current.has(questionId)) {
+        countedQuestionIds.current.add(questionId);
+
+        try {
+          const { jwt } = await account.createJWT();
+
+          const response = await fetch(
+            `/api/questions/${encodeURIComponent(questionId)}/view`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${jwt}`,
+            },
+          }
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          
+          
+          if (!cancelled && typeof data.views === "number") {
+            setViewCount(data.views);
+          }
+
+        } else {
+          console.warn("Could not record question view.");
+          console.error("View API failed:", response.status);
+        }
+      } catch {
+        console.warn("View tracking skipped (user may not be logged in).");
+      } 
+    }
+
+        
+
+        
+
       } catch (err) {
         console.error("Failed to load question:", err);
 
@@ -349,6 +399,12 @@ function QuestionDetailsContent() {
               day: "numeric",
             })}
           </span>
+
+          <span className="inline-flex items-center gap-2">
+            <Eye className="size-4" />
+            {viewCount} {viewCount === 1 ? "view" : "views"}
+          </span>
+
         </div>
       </header>
 

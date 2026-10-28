@@ -2,7 +2,12 @@
 import { Query } from "node-appwrite";
 
 import { tablesDB, users } from "@/models/server/config";
-import { db, questionTable, voteTable } from "@/models/name";
+import {
+  db,
+  questionTable,
+  answerTable,
+  voteTable,
+} from "@/models/name";
 
 export type Sort = "newest" | "active" | "top";
 
@@ -39,6 +44,7 @@ interface QuestionRow {
   authorId: string;
   tags?: string[];
   acceptedAnswerId?: string | null;
+  views?: number;
   $createdAt: string;
   $updatedAt: string;
 }
@@ -46,6 +52,11 @@ interface VoteRow {
   type: "question" | "answer";
   typeId: string;
   voteStatus: "upvoted" | "downvoted";
+}
+
+interface AnswerRow {
+  $id: string;
+  questionId: string;
 }
 
 
@@ -150,6 +161,37 @@ export async function getQuestions(opts: {
     voteOffset += batch.length;
   }
 
+  // Fetch answers in batches and count them by question.
+  const answerCounts = new Map<string, number>();
+  let answerOffset = 0;
+    const answerBatchSize = 100;
+
+  while (true) {
+    const answerResponse = await tablesDB.listRows({
+      databaseId: db,
+      tableId: answerTable,
+      queries: [
+        Query.limit(answerBatchSize),
+        Query.offset(answerOffset),
+      ],
+    });
+
+    const answerRows = answerResponse.rows as unknown as AnswerRow[];
+
+    for (const answer of answerRows) {
+      answerCounts.set(
+        answer.questionId,
+        (answerCounts.get(answer.questionId) ?? 0) + 1
+      );
+    }
+
+    if (answerRows.length < answerBatchSize) {
+      break;
+    }
+
+    answerOffset += answerRows.length;
+  }
+
   const voteScores = new Map<string, number>();
 
   for (const vote of voteRows) {
@@ -181,8 +223,8 @@ export async function getQuestions(opts: {
     excerpt: row.content.slice(0, 220),
     tags: row.tags ?? [],
     votes: voteScores.get(row.$id) ?? 0,
-    answers: 0,
-    views: 0,
+    answers: answerCounts.get(row.$id) ?? 0,
+    views: row.views ?? 0,
     authorId: row.authorId,
     authorName: authorNames.get(row.authorId) ?? "Riverflow user",
     solved: Boolean(row.acceptedAnswerId),
