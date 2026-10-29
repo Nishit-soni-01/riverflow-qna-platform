@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuthStore } from "@/store/Auth";
 import { cn } from "@/lib/utils";
+import { OAuthProvider } from "appwrite";
 
 type Values = {
   firstname: string;
@@ -80,7 +81,7 @@ function Field({
 }
 
 export default function Register() {
-  const { login, createAccount } = useAuthStore();
+  const { login, createAccount, loginWithOAuth } = useAuthStore();
 
   const [values, setValues] = React.useState<Values>({
     firstname: "",
@@ -115,86 +116,81 @@ export default function Register() {
     "aria-describedby": visible(name) ? `${name}-error` : undefined,
   });
 
-  
-const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-  e.preventDefault();
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
 
-  setTouched({
-    firstname: true,
-    lastname: true,
-    email: true,
-    password: true,
-  });
+    setTouched({
+      firstname: true,
+      lastname: true,
+      email: true,
+      password: true,
+    });
 
-  const currentErrors = validate(values);
-  const firstInvalid = (
-    Object.keys(currentErrors) as (keyof Values)[]
-  )[0];
+    const currentErrors = validate(values);
+    const firstInvalid = (
+      Object.keys(currentErrors) as (keyof Values)[]
+    )[0];
 
-  if (firstInvalid) {
-    document.getElementById(firstInvalid)?.focus();
-    return;
-  }
+    if (firstInvalid) {
+      document.getElementById(firstInvalid)?.focus();
+      return;
+    }
 
-  setIsLoading(true);
-  setError("");
-
-  try {
-    // Check whether an Appwrite session already exists.
-    const { account } = await import("@/models/client/config");
-
-    let existingSession = false;
+    setIsLoading(true);
+    setError("");
 
     try {
-      await account.get();
-      existingSession = true;
+      const { account } = await import("@/models/client/config");
+
+      let existingSession = false;
+
+      try {
+        await account.get();
+        existingSession = true;
+      } catch {
+        // No active session, so registration can continue.
+      }
+
+      if (existingSession) {
+        setError(
+          "You are already logged in. Please log out before creating another account."
+        );
+        return;
+      }
+
+      const response = await createAccount(
+        `${values.firstname.trim()} ${values.lastname.trim()}`,
+        values.email.trim(),
+        values.password
+      );
+
+      if (!response.success) {
+        setError(
+          response.error?.message ?? "Unable to create your account."
+        );
+        return;
+      }
+
+      const loginResponse = await login(
+        values.email.trim(),
+        values.password
+      );
+
+      if (!loginResponse.success) {
+        setError(
+          loginResponse.error?.message ??
+            "Your account was created, but automatic login failed. Please log in."
+        );
+        return;
+      }
     } catch {
-      // No active session, so registration can continue.
-    }
-
-    if (existingSession) {
       setError(
-        "You are already logged in. Please log out before creating another account."
+        "Something went wrong. Check your connection and try again."
       );
-      return;
+    } finally {
+      setIsLoading(false);
     }
-
-    const response = await createAccount(
-      `${values.firstname.trim()} ${values.lastname.trim()}`,
-      values.email.trim(),
-      values.password
-    );
-
-    if (!response.success) {
-      setError(
-        response.error?.message ?? "Unable to create your account."
-      );
-      return;
-    }
-
-    const loginResponse = await login(
-      values.email.trim(),
-      values.password
-    );
-
-    if (!loginResponse.success) {
-      setError(
-        loginResponse.error?.message ??
-          "Your account was created, but automatic login failed. Please log in."
-      );
-      return;
-    }
-
-    // The authenticated layout can now redirect to "/".
-  } catch {
-    setError(
-      "Something went wrong. Check your connection and try again."
-    );
-  } finally {
-    setIsLoading(false);
-  }
-};
-
+  };
 
   return (
     <div className="space-y-6">
@@ -209,12 +205,22 @@ const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        {/* Wire these to account.createOAuth2Session() when OAuth is configured in Appwrite */}
-        <Button type="button" variant="outline" disabled title="Coming soon">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => loginWithOAuth(OAuthProvider.Google)}
+          disabled={isLoading}
+        >
           <IconBrandGoogle className="size-4" />
           Google
         </Button>
-        <Button type="button" variant="outline" disabled title="Coming soon">
+
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => loginWithOAuth(OAuthProvider.Github)}
+          disabled={isLoading}
+        >
           <IconBrandGithub className="size-4" />
           GitHub
         </Button>

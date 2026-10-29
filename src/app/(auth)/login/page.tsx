@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuthStore } from "@/store/Auth";
 import { useRouter } from "next/navigation";
+import { OAuthProvider } from "appwrite";
 
 type Values = { email: string; password: string };
 type Errors = Partial<Record<keyof Values, string>>;
@@ -25,7 +26,7 @@ function validate(v: Values): Errors {
 
 export default function Login() {
   const router = useRouter();
-  const { login } = useAuthStore();
+  const { login, loginWithOAuth } = useAuthStore();
 
   const [values, setValues] = React.useState<Values>({ email: "", password: "" });
   const [touched, setTouched] = React.useState<Partial<Record<keyof Values, boolean>>>({});
@@ -54,53 +55,51 @@ export default function Login() {
     "aria-describedby": visible(name) ? `${name}-error` : undefined,
   });
 
+  const handleSubmit = async (
+    e: React.SyntheticEvent<HTMLFormElement>
+  ) => {
+    e.preventDefault();
 
-const handleSubmit = async (
-  e: React.SyntheticEvent<HTMLFormElement>
-) => {
-  e.preventDefault();
+    setTouched({ email: true, password: true });
 
-  setTouched({ email: true, password: true });
+    const firstInvalid = (
+      Object.keys(errors) as (keyof Values)[]
+    )[0];
 
-  const firstInvalid = (
-    Object.keys(errors) as (keyof Values)[]
-  )[0];
-
-  if (firstInvalid) {
-    document.getElementById(firstInvalid)?.focus();
-    return;
-  }
-
-  if (isLoading) return;
-
-  setIsLoading(true);
-  setError("");
-
-  try {
-    const response = await login(
-      values.email.trim(),
-      values.password
-    );
-
-    if (!response.success) {
-      setError(
-        response.error?.message ??
-          "Unable to log in. Check your email and password, or sign out of the current session first."
-      );
+    if (firstInvalid) {
+      document.getElementById(firstInvalid)?.focus();
       return;
     }
 
-    router.replace("/");
-    router.refresh();
-  } catch {
-    setError(
-      "Something went wrong. Check your connection and try again."
-    );
-  } finally {
-    setIsLoading(false);
-  }
-};
+    if (isLoading) return;
 
+    setIsLoading(true);
+    setError("");
+
+    try {
+      const response = await login(
+        values.email.trim(),
+        values.password
+      );
+
+      if (!response.success) {
+        setError(
+          response.error?.message ??
+            "Unable to log in. Check your email and password, or sign out of the current session first."
+        );
+        return;
+      }
+
+      router.replace("/");
+      router.refresh();
+    } catch {
+      setError(
+        "Something went wrong. Check your connection and try again."
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -112,12 +111,22 @@ const handleSubmit = async (
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        {/* Wire these to account.createOAuth2Session() when OAuth is configured in Appwrite */}
-        <Button type="button" variant="outline" disabled title="Coming soon">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => loginWithOAuth(OAuthProvider.Google)}
+          disabled={isLoading}
+        >
           <IconBrandGoogle className="size-4" />
           Google
         </Button>
-        <Button type="button" variant="outline" disabled title="Coming soon">
+
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => loginWithOAuth(OAuthProvider.Github)}
+          disabled={isLoading}
+        >
           <IconBrandGithub className="size-4" />
           GitHub
         </Button>
