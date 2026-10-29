@@ -1,6 +1,7 @@
 <div align="center">
 
-<img src="./assets/banner.svg" alt="Riverflow Q&A Platform Banner" width="100%" />
+<img width="2400" height="640" alt="banner" src="https://github.com/user-attachments/assets/39d34440-1c78-4104-bf9e-48d9c58c660b" />
+
 
 # Riverflow Q&A Platform
 
